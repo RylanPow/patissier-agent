@@ -1,4 +1,4 @@
-from sqlalchemy import Select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from app.db.session import engine, SessionLocal, init_db_extensions
 from app.db.models import Base, Trend, KnowledgeDocument
@@ -63,3 +63,67 @@ MOCK_DOCUMENTS = [
         "metadata": {"topic": "Ube", "type": "formulation_note", "year": 2026},
     },
 ]
+
+def seed_database():
+    print("initializing pgvector extension...")
+    init_db_extensions()
+
+    print("checking database tables exist...")
+    Base.metadata.create_all(bind=engine)
+
+    with SessionLocal() as session:
+        # upsert quantitative trends
+        print("seeding/upserting quantitative trends...")
+        for trend_data in MOCK_TRENDS:
+            stmt = insert(Trend).values(**trend_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elemnts=[Trend.ingredient_name],
+                set_ = {
+                    "category": stmt.excluded.category,
+                    "volume_30d": stmt.excluded.volume_30d,
+                    "growth_pct": stmt.excluded.growth_pct,
+                    "geo_focus": stmt.excluded.geo_focus,
+                },
+            )
+            session.execute(stmt)
+            print(f"upserted trend: {trend_data['ingredient_name']}")
+        session.execute(stmt)
+        print(f"upserted trend: {trend_data['ingredient_name']}")
+    
+    session.commit()
+
+    # upsert RAG knowledge documents
+    print("generating embeddings and upserting knowledge documents...")
+    doc_texts = [d["content"] for d in MOCK_DOCUMENTS]
+    doc_vectors = embedding_engine.embed_documents(doc_texts)
+
+    for doc_data, vector in zip(MOCK_DOCUMENTS, doc_vectors):
+        slug = doc_data["slug"]
+        full_meta = {**doc_data['metadata'], "slug": slug}
+
+        #check if document already exists from JSONB metadata match
+        existing_doc = session.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.metadata_["slug"].astext == slug
+            )
+        ).first()
+
+        if existing_doc:
+            existing_doc.content = doc_data["content"]
+            existing_doc.metadata_ = full_meta
+            existing_doc.embedding = vector
+            print(f"update doc: {slug}")
+        else:
+            new_doc = KnowledgeDocument(
+                content=doc_data["content"],
+                metadata_=full_meta,
+                embedding=vector,
+            )
+            session.add(new_doc)
+            print(f"inserted new doc: {slug}")
+    
+    session.commit()
+    print("seeding completed successfully!")
+
+if __name__ == "__main__":
+    seed_database()
