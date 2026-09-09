@@ -77,7 +77,7 @@ def seed_database():
         for trend_data in MOCK_TRENDS:
             stmt = insert(Trend).values(**trend_data)
             stmt = stmt.on_conflict_do_update(
-                index_elemnts=[Trend.ingredient_name],
+                index_elements=[Trend.ingredient_name],
                 set_ = {
                     "category": stmt.excluded.category,
                     "volume_30d": stmt.excluded.volume_30d,
