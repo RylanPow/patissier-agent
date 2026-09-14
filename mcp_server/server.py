@@ -14,13 +14,11 @@ def get_trend_velocity(ingredient: str) -> str:
     # Returns 30-day volume, growth percentage, category, and target geographic focus.
     
     with SessionLocal() as session:
-        # Case-insensitive partial match to make agent querying more forgiving
         query = select(Trend).where(Trend.ingredient_name.ilike(f"%{ingredient.strip()}%"))
         trend = session.scalar(query)
 
         if not trend:
             return f"No trend data found for '{ingredient}' in patissier_db."
-
         return (
             f"Trend Analysis for {trend.ingredient_name}:\n"
             f"- Category: {trend.category}\n"
