@@ -2,6 +2,14 @@ import httpx
 from fastmcp import FastMCP
 from sqlalchemy import select
 
+from pathlib import Path
+import sys
+# add project root directory to sys.path so 'app' imports resolve regardless of how this script is called
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+
 from app.db.session import SessionLocal
 from app.db.models import Trend
 
