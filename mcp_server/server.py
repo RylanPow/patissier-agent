@@ -20,6 +20,13 @@ def get_trend_velocity(ingredient: str) -> str:
 
     # Retrieve quantitative velocity metrics for a specific food ingredient or product.
     # Returns 30-day volume, growth percentage, category, and target geographic focus.
+
+    # IMPORTANT NOTE: python functions apparently attach the first string literal in a function
+    # as a .__doc__ attribute, and some of the MCP stuff require it for the decorators
+
+    """
+    Retrieves quantitative velocity metrics for a specific food ingredient or product
+    """
     
     with SessionLocal() as session:
         query = select(Trend).where(Trend.ingredient_name.ilike(f"%{ingredient.strip()}%"))
@@ -38,11 +45,14 @@ def get_trend_velocity(ingredient: str) -> str:
     
 @mcp.tool()
 async def check_crop_weather(region_name: str, latitude: float, longitude: float) -> str:
-    # live weather conditions and short term agircultural forecastst for a crop-growing region
+    # live weather conditions and short term agricultural forecasts for a crop-growing region
     # useful for assessing yield risk, frost conditions, drought impact, etc on raw ingredients
     # args: 
     # region_name: descriptive name of the region e.g. Bronte, Sicily
     # latitude and longitude: coordinates of the growing region
+    """
+    Live weather conditions and short term agricultural forecasts for a crop-growing region
+    """
     
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
