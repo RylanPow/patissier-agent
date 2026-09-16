@@ -89,6 +89,7 @@ async def check_crop_weather(region_name: str, latitude: float, longitude: float
     except Exception as e:
         return f"Unable to retrieve weather data for {region_name}: {str(e)}"
 
+
+# remove print statements for using MCP inspector
 if __name__ == "__main__":
-    print("Starting FastMCP server...", flush=True)
     mcp.run()
