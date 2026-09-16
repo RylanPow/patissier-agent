@@ -17,7 +17,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
     "langchain-openai>=0.1.0",
     "langgraph>=0.2.0",
-    "mcp>=1.0.0",
+    "mcp<2",
     "pgvector>=0.2.5",
     "psycopg2-binary>=2.9.9",
     "pydantic>=2.6.0",
