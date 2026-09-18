@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Literal
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -12,6 +13,21 @@ from app.core.config import settings
 from app.agent.mcp_client import get_mcp_tools
 from app.agent.rag import search_food_knowledge
 
+# suppresses the "Key 'additionalProperties' is not supported in schema, ignoring" warning
+# this otherwise works totally fine
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
+
+# note the gemini output is a full dictionary, so this extracts just the response
+def extract_text_from_content(content) -> str:
+    """helper to parse Gemini's content block into clean text"""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list) and len(content) > 0:
+        # if it's a list of blocks, grab the text from the text block
+        if isinstance(content[0], dict) and "text" in content[0]:
+            return content[0]["text"]
+    return str(content)
+
 async def run_chat_loop():
     print("Booting up Patissier Agent...")
 
@@ -23,7 +39,7 @@ async def run_chat_loop():
 
         # init LLM
         llm = ChatGoogleGenerativeAI(
-            model="gemini-3.8-flash",
+            model="gemini-3.5-flash",
             google_api_key=settings.GOOGLE_API_KEY,
             temperature = 1.0
         )
@@ -90,23 +106,23 @@ async def run_chat_loop():
                     messages_to_send = [("user", user_input)]
                 
                 # stream the state graph updates to watch the agent reason in real-time
-                async for chunk in agent_executor.astream({"messages": [("user", user_input)]}, config=config, stream_mode="updates"):
+                async for chunk in agent_executor.astream({"messages": messages_to_send}, config=config, stream_mode="updates"):
                     # chuhnk is keyed by the node name that just finished (e.g. "agent" or "tools")
                     for node_name, node_state in chunk.items():
                         message = node_state["messages"][-1]
 
-                        # intercept and print Tool Calls
+                        # intercept and print tool calls
                         if message.type == "ai" and message.tool_calls:
                             for tc in message.tool_calls:
                                 print(f"  [Tool Call] {tc['name']} -> {tc['args']}")
-
-                        # intercept and print Tool Results
+                        # intercept and print tool results
                         elif message.type == "tool":
                              print(f"  [Tool Result] Data received from {message.name}")
-                        
-                        # print the final AI Response
+                        # print the final AI response
                         elif message.type == "ai" and message.content:
-                            print(f"\nPatissier: {message.content}")
+                            clean_text = extract_text_from_content(message.content)
+                            if clean_text:
+                                print(f"\nPatissier: {clean_text}")
                         
             except KeyboardInterrupt:
                 print("\nShutting down Patissier...")
