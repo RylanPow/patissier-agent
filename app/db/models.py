@@ -31,3 +31,12 @@ class KnowledgeDocument(Base):
     # fastembed with BAAI/bge-small-en-v1.5 --> exactly 384 dimensions
     # note: pgvector MUST know this dimension size to index 
     embedding: Mapped[list[float]] = mapped_column(Vector(384))
+
+class RegulatoryRecord(Base):
+    """stores basic regulatory and compliance statuses"""
+    __tablename__ = "regulatory_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ingredient_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    agency: Mapped[str] = mapped_column(String(50), default="FDA")
+    status: Mapped[str] = mapped_column(String(50)) # e.g., GRAS, banned, restricted
+    limitations: Mapped[str] = mapped_column(String(255), nullable=True)
