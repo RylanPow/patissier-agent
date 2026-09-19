@@ -11,9 +11,33 @@ if str(project_root) not in sys.path:
 
 
 from app.db.session import SessionLocal
-from app.db.models import Trend
+from app.db.models import Trend, RegulatoryRecord, KnowledgeDocument
+from app.agent.embeddings import embedding_engine # now needed for embedding substitutions
 
 mcp = FastMCP("Patissier Tools")
+
+
+@mcp.tool()
+def check_fda_gras(ingredient: str) -> str:
+    """
+    check if a specific food ingredient has Generally Recognized as Safe (GRAS) 
+    status or if it is banned or restricted by the FDA/EFSA
+    """
+    with SessionLocal() as session:
+        query = select(RegulatoryRecord).where(
+            RegulatoryRecord.ingredient_name.ilike(f"%{ingredient.strip()}%")
+        )
+        record = session.scalar(query)
+
+        if not record:
+            return f"No regulatory record found for '{ingredient}' in the database"
+        return (
+            f"Regulatory Asessment for {record.ingredient_name}:\n"
+            f"- Agency: {record.agency}\n"
+            f"- Status: {record.status}\n"
+            f"- Limitations/Warnings: {record.limitations or 'None'}"
+        )
+        
 
 @mcp.tool()
 def get_trend_velocity(ingredient: str) -> str:
@@ -98,7 +122,6 @@ async def check_crop_weather(region_name: str, latitude: float, longitude: float
 
     except Exception as e:
         return f"Unable to retrieve weather data for {region_name}: {str(e)}"
-
 
 # remove print statements for using MCP inspector
 if __name__ == "__main__":
