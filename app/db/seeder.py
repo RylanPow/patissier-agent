@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from app.db.session import engine, SessionLocal, init_db_extensions
-from app.db.models import Base, Trend, KnowledgeDocument
+from app.db.models import Base, Trend, KnowledgeDocument, RegulatoryRecord
 from app.agent.embeddings import embedding_engine
 
 MOCK_TRENDS = [
@@ -62,7 +62,36 @@ MOCK_DOCUMENTS = [
         ),
         "metadata": {"topic": "Ube", "type": "formulation_note", "year": 2026},
     },
+
+
+    # ~~~~~~ Substitution Profiles ~~~~~~~
+    {
+        "slug": "sub-pumpkin-seed-paste",
+        "content": "Ingredient: Pumpkin Seed Paste (Pepita Butter). Function: Fat source, binder, filling base. Flavor Profile: Earthy, nutty, slightly savory. Texture: Creamy, oily. Allergen: Seed (Low risk). Ideal substitution for Pistachio Paste in fillings where tree-nut allergies or costs are a concern.",
+        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Pistachio Paste"}
+    },
+    {
+        "slug": "sub-sunflower-seed-butter",
+        "content": "Ingredient: Sunflower Seed Butter. Function: Emulsifier, binder, spread. Flavor Profile: Roasted, neutral nutty, mildly sweet. Texture: Highly spreadable, smooth. Allergen: Seed (Low risk). Often used to replace peanut or pistachio butter in clean-label baked goods.",
+        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Nut Pastes"}
+    },
+    {
+        "slug": "sub-sweet-potato-color",
+        "content": "Ingredient: Purple Sweet Potato Extract. Function: Natural colorant (Red/Purple), anthocyanin source. Flavor Profile: Neutral, faintly sweet. Texture: Liquid or fine powder. Allergen: None. Excellent clean-label substitute for artificial Red Dye 40 or Titanium Dioxide in beverages.",
+        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Colorant"}
+    }
+
 ]
+
+
+MOCK_REGULATORY = [
+    {"ingredient_name": "Matcha", "agency": "FDA", "status": "GRAS", "limitations": "None for general food use."},
+    {"ingredient_name": "Pistachio Paste", "agency": "FDA", "status": "GRAS", "limitations": "Must declare tree nut allergen."},
+    {"ingredient_name": "Titanium Dioxide", "agency": "EFSA/FDA", "status": "Restricted/Banned", "limitations": "Banned in EU as food additive (E171). FDA restricts to 1% by weight."},
+    {"ingredient_name": "Brominated Vegetable Oil", "agency": "FDA", "status": "Banned", "limitations": "FDA revoked GRAS status; no longer permitted in beverages."}
+]
+
+
 
 def seed_database():
     print("initializing pgvector extension...")
@@ -78,17 +107,23 @@ def seed_database():
             stmt = insert(Trend).values(**trend_data)
             stmt = stmt.on_conflict_do_update(
                 index_elements=[Trend.ingredient_name],
-                set_ = {
-                    "category": stmt.excluded.category,
-                    "volume_30d": stmt.excluded.volume_30d,
-                    "growth_pct": stmt.excluded.growth_pct,
-                    "geo_focus": stmt.excluded.geo_focus,
-                },
+
+                # e.g. one pair is "category": stmt.excluded.category
+                set_ = {k: v for k, v in trend_data.items() if k != "ingredient_name"},
             )
             session.execute(stmt)
             print(f"upserted trend: {trend_data['ingredient_name']}")
-        session.execute(stmt)
-        print(f"upserted trend: {trend_data['ingredient_name']}")
+        
+
+        print("\n Seeding / Upserting Regulatory Records...")
+        for reg_data in MOCK_REGULATORY:
+            stmt = insert(RegulatoryRecord).values(**reg_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[RegulatoryRecord.ingredient_name],
+                set_={k: v for k, v in reg_data.items() if k != "ingredient_name"}
+            )
+            session.execute(stmt)
+            print(f"  ✓ Upserted regulation: {reg_data['ingredient_name']}")
     
     session.commit()
 
