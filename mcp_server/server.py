@@ -27,17 +27,19 @@ def check_fda_gras(ingredient: str) -> str:
         query = select(RegulatoryRecord).where(
             RegulatoryRecord.ingredient_name.ilike(f"%{ingredient.strip()}%")
         )
-        record = session.scalar(query)
+        # fetch all matching records (e.g., both FDA and EFSA)
+        records = session.scalars(query).all()
 
-        if not record:
-            return f"No regulatory record found for '{ingredient}' in the database"
-        return (
-            f"Regulatory Asessment for {record.ingredient_name}:\n"
-            f"- Agency: {record.agency}\n"
-            f"- Status: {record.status}\n"
-            f"- Limitations/Warnings: {record.limitations or 'None'}"
-        )
-        
+        if not records:
+            return f"No regulatory record found for '{ingredient}' in the database."
+
+        output = [f"Regulatory Assessment for {records[0].ingredient_name}:"]
+        for record in records:
+            output.append(f"\n[{record.agency}] Status: {record.status}")
+            output.append(f"Limitations: {record.limitations or 'None'}")
+            output.append(f"Last Updated: {record.updated_at.strftime('%Y-%m-%d')}")
+            
+        return "\n".join(output)
 
 @mcp.tool()
 def get_trend_velocity(ingredient: str) -> str:
@@ -122,7 +124,42 @@ async def check_crop_weather(region_name: str, latitude: float, longitude: float
 
     except Exception as e:
         return f"Unable to retrieve weather data for {region_name}: {str(e)}"
+    
+@mcp.tool()
+def find_ingredient_substitutes(target_ingredient: str) -> str:
+    """
+    Find clean-label or cost-effective functional substitutes for a target ingredient.
+    Uses vector similarity search over funcitonal profiles (flavor, texture, function).
 
-# remove print statements for using MCP inspector
+    Args:
+        target_ingredient: The ingredient to replace (e.g. "Pistachio Paste", "Red Dye 40")
+    """
+    try:
+        # embed the search intent
+        query_text = f"Find a functional substitute for {target_ingredient}"
+        query_vector = embedding_engine.embed_query(query_text)
+        
+        with SessionLocal() as session:
+            # specifically filter for documents tagged as 'functional_ingredient'
+            results = session.scalars(
+                select(KnowledgeDocument)
+                .where(KnowledgeDocument.metadata_["type"].astext == "substitute_profile")
+                .order_by(KnowledgeDocument.embedding.cosine_distance(query_vector))
+                .limit(2)
+            ).all()
+            
+            if not results:
+                return f"No functional substitutes found for '{target_ingredient}'."
+            
+            formatted_results = []
+            for i, doc in enumerate(results, 1):
+                target = doc.metadata_.get("target", "Unknown")
+                formatted_results.append(
+                    f"--- Substitute {i} (Target Replacement: {target}) ---\n{doc.content}"
+                )
+            return "\n\n".join(formatted_results)
+    except Exception as e:
+        return f"Error executing substitution search: {str(e)}"        
+
 if __name__ == "__main__":
     mcp.run()

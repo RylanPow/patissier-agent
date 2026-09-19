@@ -17,7 +17,9 @@ MOCK_TRENDS = [
 MOCK_REGULATORY = [
     {"ingredient_name": "Matcha", "agency": "FDA", "status": "GRAS", "limitations": "None for general food use."},
     {"ingredient_name": "Pistachio Paste", "agency": "FDA", "status": "GRAS", "limitations": "Must declare tree nut allergen."},
-    {"ingredient_name": "Titanium Dioxide", "agency": "EFSA/FDA", "status": "Restricted/Banned", "limitations": "Banned in EU as food additive (E171). FDA restricts to 1% by weight."},
+    # split EFSA and FDA into two clean records
+    {"ingredient_name": "Titanium Dioxide", "agency": "EFSA", "status": "Banned", "limitations": "Banned in EU as food additive (E171)."},
+    {"ingredient_name": "Titanium Dioxide", "agency": "FDA", "status": "Restricted", "limitations": "Restricts to 1% by weight."},
     {"ingredient_name": "Brominated Vegetable Oil", "agency": "FDA", "status": "Banned", "limitations": "FDA revoked GRAS status; no longer permitted in beverages."}
 ]
 
@@ -39,17 +41,17 @@ MOCK_DOCUMENTS = [
     {
         "slug": "sub-pumpkin-seed-paste",
         "content": "Ingredient: Pumpkin Seed Paste (Pepita Butter). Function: Fat source, binder, filling base. Flavor Profile: Earthy, nutty, slightly savory. Texture: Creamy, oily. Allergen: Seed (Low risk). Ideal substitution for Pistachio Paste in fillings where tree-nut allergies or costs are a concern.",
-        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Pistachio Paste"}
+        "metadata": {"topic": "Substitution", "type": "substitute_profile", "target": "Pistachio Paste"}
     },
     {
         "slug": "sub-sunflower-seed-butter",
         "content": "Ingredient: Sunflower Seed Butter. Function: Emulsifier, binder, spread. Flavor Profile: Roasted, neutral nutty, mildly sweet. Texture: Highly spreadable, smooth. Allergen: Seed (Low risk). Often used to replace peanut or pistachio butter in clean-label baked goods.",
-        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Nut Pastes"}
+        "metadata": {"topic": "Substitution", "type": "substitute_profile", "target": "Nut Pastes"}
     },
     {
         "slug": "sub-sweet-potato-color",
         "content": "Ingredient: Purple Sweet Potato Extract. Function: Natural colorant (Red/Purple), anthocyanin source. Flavor Profile: Neutral, faintly sweet. Texture: Liquid or fine powder. Allergen: None. Excellent clean-label substitute for artificial Red Dye 40 or Titanium Dioxide in beverages.",
-        "metadata": {"topic": "Substitution", "type": "functional_ingredient", "target": "Colorant"}
+        "metadata": {"topic": "Substitution", "type": "substitute_profile", "target": "Colorant"}
     }
 ]
 
@@ -77,8 +79,8 @@ def seed_database():
         for reg_data in MOCK_REGULATORY:
             stmt = insert(RegulatoryRecord).values(**reg_data)
             stmt = stmt.on_conflict_do_update(
-                index_elements=[RegulatoryRecord.ingredient_name],
-                set_={k: v for k, v in reg_data.items() if k != "ingredient_name"}
+                index_elements=["ingredient_name", "agency"],
+                set_={k: v for k, v in reg_data.items() if k not in ["ingredient_name", "agency"]}            
             )
             session.execute(stmt)
             print(f" Upserted regulation: {reg_data['ingredient_name']}")

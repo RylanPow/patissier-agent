@@ -1,7 +1,7 @@
 
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import String, Integer, Float, DateTime, func
+from sqlalchemy import String, Integer, Float, DateTime, func, Text, UniqueConstraint
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 
@@ -33,10 +33,21 @@ class KnowledgeDocument(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(384))
 
 class RegulatoryRecord(Base):
-    """stores basic regulatory and compliance statuses"""
+    """Stores regulatory and compliance statuses per agency."""
     __tablename__ = "regulatory_records"
+    
+    # the composite unique constraint allows "Titanium Dioxide" to exist 
+    # multiple times as long as the agency is different.
+    __table_args__ = (
+        UniqueConstraint('ingredient_name', 'agency', name='uq_ingredient_agency'),
+    )
+    
     id: Mapped[int] = mapped_column(primary_key=True)
-    ingredient_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    ingredient_name: Mapped[str] = mapped_column(String(100), index=True)
     agency: Mapped[str] = mapped_column(String(50), default="FDA")
-    status: Mapped[str] = mapped_column(String(50)) # e.g., GRAS, banned, restricted
-    limitations: Mapped[str] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(50)) 
+    limitations: Mapped[str] = mapped_column(Text, nullable=True) # upgraded to Text
+    
+    # added timestamps
+    effective_date: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
