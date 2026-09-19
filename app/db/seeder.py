@@ -123,7 +123,7 @@ def seed_database():
                 set_={k: v for k, v in reg_data.items() if k != "ingredient_name"}
             )
             session.execute(stmt)
-            print(f"  ✓ Upserted regulation: {reg_data['ingredient_name']}")
+            print(f"Upserted regulation: {reg_data['ingredient_name']}")
     
     session.commit()
 
@@ -137,11 +137,11 @@ def seed_database():
         full_meta = {**doc_data['metadata'], "slug": slug}
 
         #check if document already exists from JSONB metadata match
-        existing_doc = session.scalars(
+        existing_doc = session.scalar(
             select(KnowledgeDocument).where(
                 KnowledgeDocument.metadata_["slug"].astext == slug
             )
-        ).first()
+        )
 
         if existing_doc:
             existing_doc.content = doc_data["content"]
