@@ -3,8 +3,7 @@ import logging
 from typing import Literal
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage
-
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
@@ -12,124 +11,66 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.core.config import settings
 from app.agent.mcp_client import get_mcp_tools
 from app.agent.rag import search_food_knowledge
+from app.agent.state import PatissierState, SupervisorRouter
+from app.agent.prompts import (
+    SUPERVISOR_PROMPT, 
+    MARKET_SPECIALIST_PROMPT, 
+    FORMULATION_SPECIALIST_PROMPT, 
+    SYNTHESIZER_PROMPT
+)
 
-# suppresses the "Key 'additionalProperties' is not supported in schema, ignoring" warning
-# this otherwise works totally fine
+# mute langchain/gemini schema warning
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
-# note the gemini output is a full dictionary, so this extracts just the response
 def extract_text_from_content(content) -> str:
-    """helper to parse Gemini's content block into clean text"""
+    """Helper to parse Gemini's content blocks into clean text."""
     if isinstance(content, str):
         return content
     elif isinstance(content, list) and len(content) > 0:
-        # if it's a list of blocks, grab the text from the text block
         if isinstance(content[0], dict) and "text" in content[0]:
             return content[0]["text"]
     return str(content)
 
+
 async def run_chat_loop():
-    print("Booting up Patissier Agent...")
-
-    # connect to MCP Server and get the live tools
+    print("Booting up Patissier Multi-Agent System...")
+    
     async with get_mcp_tools() as mcp_tools:
-        # connect the local RAG tool with remote MCP tools
-        all_tools = [search_food_knowledge] + mcp_tools
-        print(f"loaded {len(all_tools)} tools")
-
-        # init LLM
+        # split tools into specialist domains
+        market_tool_names = ["get_trend_velocity", "check_crop_weather"]
+        formulation_tool_names = ["check_fda_gras", "find_ingredient_substitutes"]
+        
+        market_tools = [t for t in mcp_tools if t.name in market_tool_names]
+        formulation_tools = [search_food_knowledge] + [t for t in mcp_tools if t.name in formulation_tool_names]
+        
+        print(f"Loaded {len(market_tools)} Market tools and {len(formulation_tools)} Formulation tools.")
+        
         llm = ChatGoogleGenerativeAI(
-            model="gemini-3.5-flash",
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature = 1.0
-        )
-        llm_with_tools = llm.bind_tools(all_tools)
-
-        #i init conversation memory
-        system_prompt = SystemMessage(
-            content="You are Patissier, an advanced enterprise food intelligence agent."
-            "You have access to internal qualitative knowledge via RAG (search_food_knowledge) "
-            "and live quantitative/weather data via MCP tools (get_trend_velocity, check_crop_weather). "
-            "Always think step by step. If a user asks about a food trend, try to back up your claims "
-            "with both qualitative context and hard velocity numbers. Be concise, professional, and analytical."
+            model="gemini-3.8-flash", 
+            google_api_key=settings.GOOGLE_API_KEY, 
+            temperature=1
         )
 
+    def create_specialist_graph(specialist_prompt: str, tools: list):
+        """creates an isolated ReAct StateGraph for a specialist"""
+        llm_with_tools = llm.bind_tools(tools)
 
-        # define graph nodes
         def call_model(state: MessagesState):
-            response = llm_with_tools.invoke(state["messages"])
+            messages = state["messages"]
+            if not any(isinstance(m, SystemMessage) for m in messages):
+                messages = [SystemMessage(content=specialist_prompt)] + messages
+            response = llm_with_tools.invoke(messages)
             return {"messages" : [response]}
         
-        # routing logic
         def should_continue(state: MessagesState) -> Literal["tools", "__end__"]:
-            last_message = state["messages"][-1]
-            if last_message.tool_calls:
+            if state["messages"][-1].tool_calls:
                 return "tools"
             return "__end__"
-        
-        # ~~~~~~~~~~ Construct the State Graph ~~~~~~~~~~~
+            
         workflow = StateGraph(MessagesState)
         workflow.add_node("agent", call_model)
-        workflow.add_node("tools", ToolNode(all_tools))
-
+        workflow.add_node("tools", ToolNode(tools))
         workflow.add_edge(START, "agent")
-        workflow.add_conditional_edges("agent", should_continue, ["tools", END])
+        workflow.add_conditional_edges("agent", should_continue, ["tools", "__end__"])
         workflow.add_edge("tools", "agent")
-
-        memory = MemorySaver()
-        agent_executor = workflow.compile(checkpointer=memory)
-        config = {"configurable": {"thread_id" : "patissier-session-1"}}
-
-        print("\n" + "="*50)
-        print("Patissier explicit StateGraph is ready! Type 'exit' to quit.")
-        print("="*50)
-
-        is_first_turn = True
-
-        while True:
-            try:
-                user_input = input("\nYou: ")
-                if user_input.lower() in ['exit', 'quit', 'q']:
-                    print("Shutting down Patissier...")
-                    break
-                    
-                if not user_input.strip():
-                    continue
-                    
-                print("\n Thinking...")
-                # keep track of printed message IDs so we don't double-print during stream updates
-               
-                if is_first_turn:
-                    messages_to_send = [system_prompt, ("user", user_input)]
-                    is_first_turn = False
-                else:
-                    messages_to_send = [("user", user_input)]
-                
-                # stream the state graph updates to watch the agent reason in real-time
-                async for chunk in agent_executor.astream({"messages": messages_to_send}, config=config, stream_mode="updates"):
-                    # chuhnk is keyed by the node name that just finished (e.g. "agent" or "tools")
-                    for node_name, node_state in chunk.items():
-                        message = node_state["messages"][-1]
-
-                        # intercept and print tool calls
-                        if message.type == "ai" and message.tool_calls:
-                            for tc in message.tool_calls:
-                                print(f"  [Tool Call] {tc['name']} -> {tc['args']}")
-                        # intercept and print tool results
-                        elif message.type == "tool":
-                             print(f"  [Tool Result] Data received from {message.name}")
-                        # print the final AI response
-                        elif message.type == "ai" and message.content:
-                            clean_text = extract_text_from_content(message.content)
-                            if clean_text:
-                                print(f"\nPatissier: {clean_text}")
-                        
-            except KeyboardInterrupt:
-                print("\nShutting down Patissier...")
-                break
-            except Exception as e:
-                print(f"\nError during execution: {e}")
-
-if __name__ == "__main__":
-    asyncio.run(run_chat_loop())
-                
+        return workflow.compile()
