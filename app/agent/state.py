@@ -16,6 +16,9 @@ class PatissierState(TypedDict):
     # explicit routing control
     next_node: Optional[str]
 
+    #iteration saftey guardrail so supervisor doesn't doomloop and burn tokens
+    supervisor_iterations: Optional[int] 
+
 class SupervisorRouter(BaseModel):
     """Pydantic schema for structured supervisor routing decisions."""
     next_node: str = Field(

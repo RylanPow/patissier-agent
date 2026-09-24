@@ -20,6 +20,7 @@ from app.agent.prompts import (
 )
 
 # mute LangChain/Gemini schema warnings
+logging.getLogger("langchain_google_genai").setLevel(logging.ERROR)
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
 def extract_text_from_content(content) -> str:
@@ -46,9 +47,9 @@ async def run_chat_loop():
         
         # 2. initialize Gemini
         llm = ChatGoogleGenerativeAI(
-            model="gemini-3.6-flash", 
+            model="gemini-3.5-flash-lite", 
             google_api_key=settings.GOOGLE_API_KEY, 
-            temperature=1
+            # temperature=1
         )
 
         # specialist subgraph factory
@@ -83,27 +84,64 @@ async def run_chat_loop():
         # main supervisor graph nodes
         async def supervisor_node(state: PatissierState):
             print("  [System] Supervisor assessing routing logic...")
+            
+            # Guardrail: Prevent infinite routing loops
+            iterations = state.get("supervisor_iterations") or 0
+            if iterations >= 3:
+                print("  [System] Supervisor iteration limit reached. Forcing synthesis.")
+                return {"next_node": "synthesizer", "supervisor_iterations": iterations + 1}
+            
             supervisor_llm = llm.with_structured_output(SupervisorRouter)
-
-            # grab the original user objective
+            
+            # note: search in reverse to find the CURRENT turn's objective
             original_user_msg = next(
-                (m.content for m in state["messages"] if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"),
+                (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"),
                 "No objective found"
             )
-
+            
             status = (
-                f"Market Research: {'Collected' if state.get('market_research') else 'Not yet collected'}\n"
-                f"Formulation & Compliance: {'Collected' if state.get('formulation_compliance') else 'Not yet collected'}"
+                f"Market Data: {'Collected' if state.get('market_research') else 'Pending'}\n"
+                f"Formulation Data: {'Collected' if state.get('formulation_compliance') else 'Pending'}"
             )
-
-            sys_msg = SystemMessage(content=SUPERVISOR_PROMPT + f"\n\nCURRENT PROGRESS:\n{status}")
+            
+            sys_msg = SystemMessage(content=SUPERVISOR_PROMPT + f"\n\nCURRENT STATUS:\n{status}")
             routing_prompt = HumanMessage(
                 content=f"User Objective: {original_user_msg}\n\nGiven the current progress above, determine the next node to run."
             )
-
+            
             decision = await supervisor_llm.ainvoke([sys_msg, routing_prompt])
             print(f"  [System] Supervisor decided next step: {decision.next_node}")
-            return {"next_node": decision.next_node}
+            
+            return {
+                "next_node": decision.next_node, 
+                "supervisor_iterations": iterations + 1
+            }
+
+        async def synthesizer_node(state: PatissierState):
+            print("  [System] Synthesizer drafting executive report...")
+            sys_msg = SystemMessage(content=SYNTHESIZER_PROMPT)
+            findings = (
+                f"Market Data:\n{state.get('market_research', 'None')}\n\n"
+                f"Formulation Data:\n{state.get('formulation_compliance', 'None')}"
+            )
+            
+            # Fix: Search in reverse to ensure the final report answers the current question
+            user_goal = next(
+                (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"), ""
+            )
+            messages = [
+                sys_msg, HumanMessage(content=f"User Goal: {user_goal}\n\nPlease synthesize the following findings into the final report:\n{findings}")
+            ]
+            response = await llm.ainvoke(messages)
+            
+            # return message and reset turn-specific scratchpad info
+            return {
+                "messages": [response],
+                "market_research": None,
+                "formulation_compliance": None,
+                "next_node": None,
+                "supervisor_iterations": 0,
+            }
 
 
         async def market_node(state: PatissierState):
