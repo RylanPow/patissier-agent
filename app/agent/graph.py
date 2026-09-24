@@ -46,7 +46,7 @@ async def run_chat_loop():
         
         # 2. initialize Gemini
         llm = ChatGoogleGenerativeAI(
-            model="gemini-3.5-flash-lite", 
+            model="gemini-3.6-flash", 
             google_api_key=settings.GOOGLE_API_KEY, 
             temperature=1
         )
@@ -83,20 +83,28 @@ async def run_chat_loop():
         # main supervisor graph nodes
         async def supervisor_node(state: PatissierState):
             print("  [System] Supervisor assessing routing logic...")
-            # use Gemini's structured output to force a valid routing decision
-            # change if not gemini
             supervisor_llm = llm.with_structured_output(SupervisorRouter)
-            
-            # inject dynamic status so the supervisor knows what has already been completed
-            status = (
-                f"Market Data: {'Collected' if state.get('market_research') else 'Pending'}\n"
-                f"Formulation Data: {'Collected' if state.get('formulation_compliance') else 'Pending'}"
+
+            # grab the original user objective
+            original_user_msg = next(
+                (m.content for m in state["messages"] if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"),
+                "No objective found"
             )
-            sys_msg = SystemMessage(content=SUPERVISOR_PROMPT + f"\n\nCURRENT STATUS:\n{status}")
-            
-            decision = await supervisor_llm.ainvoke([sys_msg] + state["messages"])
+
+            status = (
+                f"Market Research: {'Collected' if state.get('market_research') else 'Not yet collected'}\n"
+                f"Formulation & Compliance: {'Collected' if state.get('formulation_compliance') else 'Not yet collected'}"
+            )
+
+            sys_msg = SystemMessage(content=SUPERVISOR_PROMPT + f"\n\nCURRENT PROGRESS:\n{status}")
+            routing_prompt = HumanMessage(
+                content=f"User Objective: {original_user_msg}\n\nGiven the current progress above, determine the next node to run."
+            )
+
+            decision = await supervisor_llm.ainvoke([sys_msg, routing_prompt])
             print(f"  [System] Supervisor decided next step: {decision.next_node}")
             return {"next_node": decision.next_node}
+
 
         async def market_node(state: PatissierState):
             print("  [System] Executing Market Specialist Sub-Graph...")
@@ -106,7 +114,6 @@ async def run_chat_loop():
             # save findings to the scratchpad AND append a summary to the main thread
             return {
                 "market_research": final_text,
-                "messages": [AIMessage(content=f"[Market Specialist Findings]: {final_text}", name="MarketSpecialist")]
             }
 
         async def formulation_node(state: PatissierState):
@@ -116,21 +123,28 @@ async def run_chat_loop():
             
             return {
                 "formulation_compliance": final_text,
-                "messages": [AIMessage(content=f"[Formulation Specialist Findings]: {final_text}", name="FormulationSpecialist")]
             }
 
         async def synthesizer_node(state: PatissierState):
             print("  [System] Synthesizer drafting executive report...")
             sys_msg = SystemMessage(content=SYNTHESIZER_PROMPT)
             findings = (
-                f"Market Data:\n{state.get('market_research', 'None')}\n\n"
-                f"Formulation Data:\n{state.get('formulation_compliance', 'None')}"
+                f"### Market Data\n{state.get('market_research', 'Not collected')}\n\n"
+                f"### Formulation Data\n{state.get('formulation_compliance', 'Not collected')}"
             )
-            # pass the raw findings to the synthesizer to generate the final markdown response
-            messages = [sys_msg] + state["messages"] + [HumanMessage(content=f"Please synthesize the following findings into the final report:\n{findings}")]
-            response = await llm.ainvoke(messages)
+            
+            user_goal = next(
+                (m.content for m in state["messages"] if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"),
+                ""
+            )
+            
+            prompt = [
+                sys_msg,
+                HumanMessage(content=f"User Goal: {user_goal}\n\nSynthesize the following collected intelligence:\n{findings}")
+            ]
+            
+            response = await llm.ainvoke(prompt)
             return {"messages": [response]}
-
 
         # ~~~MAIN GRAPH~~
         def supervisor_router(state: PatissierState) -> str:
