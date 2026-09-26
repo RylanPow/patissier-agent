@@ -19,6 +19,18 @@ from app.agent.prompts import (
     SYNTHESIZER_PROMPT
 )
 
+import time
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def timed(label: str):
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        dt = time.perf_counter() - t0
+        print(f"  [Timing] {label}: {dt:.2f}s")
+
 # mute LangChain/Gemini schema warnings
 import warnings
 warnings.filterwarnings(
@@ -27,6 +39,9 @@ warnings.filterwarnings(
 )
 logging.getLogger("langchain_google_genai").setLevel(logging.ERROR)
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
+logging.getLogger("google_genai").setLevel(logging.ERROR)
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
+logging.getLogger("google.genai").setLevel(logging.ERROR)
 
 def extract_text_from_content(content) -> str:
     """Helper to parse Gemini's content blocks into clean text."""
@@ -114,7 +129,8 @@ async def run_chat_loop():
                 content=f"User Objective: {original_user_msg}\n\nGiven the current progress above, determine the next node to run."
             )
             
-            decision = await supervisor_llm.ainvoke([sys_msg, routing_prompt])
+            async with timed("supervisor.ainvoke"):
+                decision = await supervisor_llm.ainvoke([sys_msg, routing_prompt])
             print(f"  [System] Supervisor decided next step: {decision.next_node}")
             
             return {
@@ -138,7 +154,9 @@ async def run_chat_loop():
                 sys_msg, HumanMessage(content=f"User Goal: {user_goal}\n\nPlease synthesize the following findings into the final report:\n{findings}")
             ]
             synthesizer_llm = llm.bind(max_output_tokens=200)
-            response = await synthesizer_llm.ainvoke(messages)
+            
+            async with timed("synthesizer.ainvoke"):
+                response = await synthesizer_llm.ainvoke(messages)
             
             # return message and reset turn-specific scratchpad info
             return {
@@ -152,7 +170,8 @@ async def run_chat_loop():
 
         async def market_node(state: PatissierState):
             print("  [System] Executing Market Specialist Sub-Graph...")
-            result = await market_graph.ainvoke({"messages": state["messages"]})
+            async with timed("market_graph.ainvoke"):
+                result = await market_graph.ainvoke({"messages": state["messages"]})
             final_text = extract_text_from_content(result["messages"][-1].content)
             
             # save findings to the scratchpad AND append a summary to the main thread
@@ -162,7 +181,10 @@ async def run_chat_loop():
 
         async def formulation_node(state: PatissierState):
             print("  [System] Executing Formulation Specialist Sub-Graph...")
-            result = await formulation_graph.ainvoke({"messages": state["messages"]})
+
+            async with timed("formulation_graph.ainvoke"):
+                result = await formulation_graph.ainvoke({"messages": state["messages"]})
+
             final_text = extract_text_from_content(result["messages"][-1].content)
             
             return {
