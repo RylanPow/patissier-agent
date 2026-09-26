@@ -20,6 +20,11 @@ from app.agent.prompts import (
 )
 
 # mute LangChain/Gemini schema warnings
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=".*Direct use of automatic function calling.*",
+)
 logging.getLogger("langchain_google_genai").setLevel(logging.ERROR)
 logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
@@ -55,7 +60,7 @@ async def run_chat_loop():
         # specialist subgraph factory
         def create_specialist_graph(specialist_prompt: str, tools: list):
             """Creates an isolated ReAct StateGraph for a specialist"""
-            llm_with_tools = llm.bind_tools(tools)
+            llm_with_tools = llm.bind(max_output_tokens=100).bind_tools(tools)
             
             def call_model(state: MessagesState):
                 messages = state["messages"]
@@ -91,7 +96,7 @@ async def run_chat_loop():
                 print("  [System] Supervisor iteration limit reached. Forcing synthesis.")
                 return {"next_node": "synthesizer", "supervisor_iterations": iterations + 1}
             
-            supervisor_llm = llm.with_structured_output(SupervisorRouter)
+            supervisor_llm = llm.bind(max_output_tokens=50).with_structured_output(SupervisorRouter)
             
             # note: search in reverse to find the CURRENT turn's objective
             original_user_msg = next(
@@ -132,7 +137,8 @@ async def run_chat_loop():
             messages = [
                 sys_msg, HumanMessage(content=f"User Goal: {user_goal}\n\nPlease synthesize the following findings into the final report:\n{findings}")
             ]
-            response = await llm.ainvoke(messages)
+            synthesizer_llm = llm.bind(max_output_tokens=200)
+            response = await synthesizer_llm.ainvoke(messages)
             
             # return message and reset turn-specific scratchpad info
             return {
@@ -163,33 +169,6 @@ async def run_chat_loop():
                 "formulation_compliance": final_text,
             }
 
-        async def synthesizer_node(state: PatissierState):
-            print("  [System] Synthesizer drafting executive report...")
-            sys_msg = SystemMessage(content=SYNTHESIZER_PROMPT)
-            findings = (
-                f"### Market Data\n{state.get('market_research', 'Not collected')}\n\n"
-                f"### Formulation Data\n{state.get('formulation_compliance', 'Not collected')}"
-            )
-            
-            user_goal = next(
-                (m.content for m in state["messages"] if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human"),
-                ""
-            )
-            
-            prompt = [
-                sys_msg,
-                HumanMessage(content=f"User Goal: {user_goal}\n\nSynthesize the following collected intelligence:\n{findings}")
-            ]
-            
-            synthesizer_llm = llm.bind(max_tokens=300)
-            response = await synthesizer_llm.ainvoke(prompt)
-            return {
-                    "messages": [response],
-                    "market_research": None,
-                    "formulation_compliance": None,
-                    "next_node": None,
-                    "supervisor_iterations": 0
-            }
 
         # ~~~MAIN GRAPH~~
         def supervisor_router(state: PatissierState) -> str:
