@@ -181,8 +181,15 @@ async def run_chat_loop():
                 HumanMessage(content=f"User Goal: {user_goal}\n\nSynthesize the following collected intelligence:\n{findings}")
             ]
             
-            response = await llm.ainvoke(prompt)
-            return {"messages": [response]}
+            synthesizer_llm = llm.bind(max_tokens=300)
+            response = await synthesizer_llm.ainvoke(prompt)
+            return {
+                    "messages": [response],
+                    "market_research": None,
+                    "formulation_compliance": None,
+                    "next_node": None,
+                    "supervisor_iterations": 0
+            }
 
         # ~~~MAIN GRAPH~~
         def supervisor_router(state: PatissierState) -> str:
@@ -229,9 +236,23 @@ async def run_chat_loop():
                     continue
                     
                 print("\n Processing...")
+
+
+                inputs = {
+                    "messages": [("user", user_input)],
+                    "market_research": None,
+                    "formulation_compliance": None,
+                    "next_node": None,
+                    "supervisor_iterations": 0,
+                }               
                 
                 # stream the main graph updates (we will see the System print statements trigger)
-                async for chunk in agent_executor.astream({"messages": [("user", user_input)]}, config=config, stream_mode="updates"):
+                async for chunk in agent_executor.astream(
+                        inputs, 
+                        config=config, 
+                        stream_mode="updates"
+                    ):
+                    
                     # only care about printing the final synthesizer output to the user
                     if "synthesizer" in chunk:
                         message = chunk["synthesizer"]["messages"][-1]
