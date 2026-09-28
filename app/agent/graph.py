@@ -56,7 +56,8 @@ async def run_chat_loop():
     print(" Booting up Patissier Multi-Agent System...")
     
     async with get_mcp_tools() as mcp_tools:
-        # 1. split tools into specialist domains
+        # split tools into specialist domains
+        # so specialists only see relevant tools
         market_tool_names = ["get_trend_velocity", "check_crop_weather"]
         formulation_tool_names = ["check_fda_gras", "find_ingredient_substitutes"]
         
@@ -65,7 +66,6 @@ async def run_chat_loop():
         
         print(f"Loaded {len(market_tools)} Market tools and {len(formulation_tools)} Formulation tools.")
         
-        # 2. initialize Gemini
         llm = ChatGoogleGenerativeAI(
             model="gemini-3.5-flash-lite", 
             google_api_key=settings.GOOGLE_API_KEY, 
