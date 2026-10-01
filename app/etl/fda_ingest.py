@@ -40,3 +40,47 @@ def fetch_substance_data(substance_name: str) -> dict | None:
     except Exception as e:
         print(f" Error fetching OpenFDA data for '{substance_name}': {e}")
     return None
+
+def parse_openfda_record(query_term: str, data: dict | None) -> dict:
+    """Transform raw OpenFDA payload into our RegulatoryRecord schema."""
+    agency = "FDA"
+    
+    if not data:
+        # default fallback for traditional botanical/food ingredients not registered as synthetic additives
+        return {
+            "ingredient_name": query_term.capitalize(),
+            "agency": agency,
+            "status": "GRAS (Traditional/Pending Notice)",
+            "limitations": "Common food substance; verify specific supplier GRN or cGMP usage limits.",
+            "effective_date": datetime.utcnow()
+        }
+
+    # extract official substance name or fall back to query term
+    substance_name = data.get("substance_name", query_term).capitalize()
+    
+    # extract regulatory status details
+    classes = data.get("substance_classification", [])
+    status = "GRAS / Regulated Additive" if classes else "Registered Food Substance"
+    if any("BANNED" in c.upper() or "REVOKED" in c.upper() for c in classes):
+        status = "Banned"
+
+    #assemble limitations and technical usages
+    technical_effects = data.get("technical_effects", [])
+    effects_str = ", ".join(technical_effects) if technical_effects else "General food use"
+    
+    citations = []
+    for reg in data.get("regulations", []):
+        cfr = reg.get("citation")
+        if cfr:
+            citations.append(cfr)
+            
+    citation_str = f" (CFR: {', '.join(citations)})" if citations else ""
+    limitations = f"Approved technical uses: {effects_str}{citation_str}"
+
+    return {
+        "ingredient_name": substance_name,
+        "agency": agency,
+        "status": status,
+        "limitations": limitations,
+        "effective_date": datetime.utcnow()
+    }
